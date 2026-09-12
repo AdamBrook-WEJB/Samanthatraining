@@ -13,14 +13,20 @@ TO PUT IT ONLINE (GitHub Pages)
 
 WHAT IS IN IT
   Today      the session the plan suggests, the water tracker and a quote
-  My Week    swap any day's session, or start any session whenever you like
-  Journal    a month calendar of the days you moved, every session you have
-             saved, and the Sharing & backup settings
+  My Week    swap any day's session, or browse and start any of the nine
+  Journal    a month calendar of the days you moved, every saved session,
+             and the Sharing & backup settings
 
-TIMED MOVES
-  Anything held for a set time (planks, stretches, the hundred) has a Start
-  button that counts down and chimes when the time is up. Stretches done one
-  side at a time count one side — tap it again when you swap over.
+TIMERS
+  Every move with a time on it has a countdown button under its name. Tap it and
+  it turns green, counts down, then chimes and buzzes.
+    - Pilates holds, and the kettlebell warm-ups and stretches
+    - All three treadmill walks, block by block
+    - The Hill Walk intervals run themselves: tap "Start 8 rounds" and it
+      alternates 1 minute hill / 1 and a half minutes flat, chiming at every
+      change and showing which round you are on
+  Stretches done one side at a time count a single side — tap again when you swap.
+  Walks keep their minutes box as well, so you can log what you actually did.
 
 NOTES
   The plan, journal and water tracker save in whichever browser it is opened in.

@@ -392,8 +392,8 @@ const TYPES = {
   rest:    { label: 'Rest',        short: 'Rest',   colour: 'amber' },
 };
 
-function ex(name, kind, target, note) {
-  return { id: slug(name), name, kind, target: target || '', note: note || '' };
+function ex(name, kind, target, note, extra) {
+  return Object.assign({ id: slug(name), name, kind, target: target || '', note: note || '' }, extra || {});
 }
 function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''); }
 
@@ -486,7 +486,7 @@ const SESSIONS = [
     focus:'Incline does the work so your joints do not have to.',
     exercises:[
       ex('Warm-Up','walk','5 min','Flat and easy'),
-      ex('Hill Intervals','walk','20 min','8 rounds: 1 min at incline 6–8, then 1½ min flat'),
+      ex('Hill Intervals','walk','20 min','8 rounds: 1 min at incline 6–8, then 1½ min flat',{ intervals: { rounds: 8, work: 60, rest: 90, workLabel: 'Hill', restLabel: 'Flat' } }),
       ex('Cool-Down','walk','5 min'),
     ]},
   { id:'walk-long', name:'Long Walk', type:'walk', mins:50,
@@ -672,6 +672,10 @@ function daily(list, salt) {
   return list[h % list.length];
 }
 function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+function goToAllSessions() {
+  S.tab = 'week'; render();
+  setTimeout(() => { const n = document.getElementById('all-sessions'); if (n) n.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
+}
 function firstNum(t) { const m = String(t || '').match(/\d+(?:\.\d+)?/); return m ? parseFloat(m[0]) : null; }
 function fmtCount(sec) { sec = Math.max(0, Math.round(sec || 0)); return `${Math.floor(sec / 60)}:${pad2(sec % 60)}`; }
 /* "2 min" -> 120 · "90 sec" -> 90 · "2 x 20 sec each side" -> 20 */
@@ -684,11 +688,12 @@ function parseHold(target) {
 const Chime = {
   ctx: null,
   prime() { try { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); } catch (e) {} },
-  play() {
-    try { if (navigator.vibrate) navigator.vibrate([90, 70, 90]); } catch (e) {}
+  play(mode) {
+    const notes = mode === 'phase' ? [[784, 0]] : [[660, 0], [880, 0.18]];
+    try { if (navigator.vibrate) navigator.vibrate(mode === 'phase' ? [70] : [90, 70, 90]); } catch (e) {}
     try {
       this.prime(); const c = this.ctx; if (!c) return;
-      [[660, 0], [880, 0.18]].forEach(([f, t]) => {
+      notes.forEach(([f, t]) => {
         const o = c.createOscillator(), g = c.createGain();
         o.type = 'sine'; o.frequency.value = f;
         o.connect(g); g.connect(c.destination);
@@ -701,26 +706,64 @@ const Chime = {
     } catch (e) {}
   },
 };
+/* A timed move is one phase; an interval block is many. */
+function phasesFor(e) {
+  if (e.intervals) {
+    const iv = e.intervals, out = [];
+    for (let r = 1; r <= iv.rounds; r++) {
+      out.push({ label: iv.workLabel || 'Push', secs: iv.work, round: r, of: iv.rounds });
+      if (iv.rest && r < iv.rounds) out.push({ label: iv.restLabel || 'Easy', secs: iv.rest, round: r, of: iv.rounds });
+    }
+    return out;
+  }
+  if (e.kind !== 'hold' && e.kind !== 'walk') return null;
+  const secs = parseHold(e.target);
+  return secs ? [{ label: '', secs }] : null;
+}
 const HoldTimer = {
-  idx: null, endsAt: 0, iv: null,
+  idx: null, phases: null, pi: 0, endsAt: 0, iv: null,
   left() { return Math.max(0, Math.ceil((this.endsAt - Date.now()) / 1000)); },
-  start(i, secs) {
+  label() {
+    if (!this.phases) return '';
+    const p = this.phases[this.pi] || {};
+    return `${p.label ? p.label + ' ' : ''}${fmtCount(this.left())} — stop`;
+  },
+  sub() {
+    if (!this.phases) return '';
+    const p = this.phases[this.pi] || {};
+    return p.of ? `round ${p.round} of ${p.of}` : '';
+  },
+  start(i, phases) {
     clearInterval(this.iv);
     Chime.prime();
-    this.idx = i; this.endsAt = Date.now() + secs * 1000;
+    this.idx = i; this.phases = phases; this.pi = 0;
+    this.endsAt = Date.now() + phases[0].secs * 1000;
     this.iv = setInterval(() => this.tick(), 250);
     renderSession();
   },
-  stop() { clearInterval(this.iv); this.iv = null; this.idx = null; this.endsAt = 0; if (S.active) renderSession(); },
+  stop() { clearInterval(this.iv); this.iv = null; this.idx = null; this.phases = null; this.pi = 0; this.endsAt = 0; if (S.active) renderSession(); },
   tick() {
     const btn = document.getElementById('holdtimer-' + this.idx);
-    const left = this.left();
-    if (btn) btn.textContent = left > 0 ? `${fmtCount(left)} — stop` : 'Done';
-    if (left <= 0) {
-      clearInterval(this.iv); this.iv = null; this.idx = null; this.endsAt = 0;
-      Chime.play(); toast('Time is up — lovely.');
-      setTimeout(() => { if (S.active) renderSession(); }, 900);
+    const sub = document.getElementById('holdsub-' + this.idx);
+    if (this.left() > 0) {
+      if (btn) btn.textContent = this.label();
+      if (sub) sub.textContent = this.sub();
+      return;
     }
+    this.pi++;
+    if (this.phases && this.pi < this.phases.length) {
+      Chime.play('phase');
+      this.endsAt = Date.now() + this.phases[this.pi].secs * 1000;
+      if (btn) btn.textContent = this.label();
+      if (sub) sub.textContent = this.sub();
+      return;
+    }
+    const many = this.phases && this.phases.length > 1;
+    clearInterval(this.iv); this.iv = null;
+    this.idx = null; this.phases = null; this.pi = 0; this.endsAt = 0;
+    Chime.play();
+    toast(many ? 'All rounds done — brilliant.' : 'Time is up — lovely.');
+    setTimeout(() => { if (S.active) renderSession(); }, 900);
   },
 };
 
@@ -950,7 +993,7 @@ function renderToday() {
       el('div', { class: 'meta' }, el('span', { class: 'tag solid amber' }, 'Rest day'), el('span', { class: 'tag' }, fmtDate(iso, { weekday: 'long' }))),
       el('h2', null, 'Today is a rest day'),
       el('p', { class: 'lede' }, daily(REST_LINES, 'r')),
-      el('button', { class: 'btn block', type: 'button', onclick: () => { S.tab = 'week'; render(); } }, 'Fancy something gentle instead?'),
+      el('button', { class: 'btn block', type: 'button', onclick: goToAllSessions }, 'Fancy something gentle instead?'),
     ));
   } else if (doneToday.length) {
     const l = doneToday[0];
@@ -958,7 +1001,7 @@ function renderToday() {
       el('div', { class: 'meta' }, el('span', { class: 'tag solid sage' }, 'Complete'), el('span', { class: 'tag' }, fmtMins(l.mins))),
       el('h2', null, `${l.name} — done`),
       el('p', { class: 'lede' }, daily(DONE_TODAY_LINES, 'd')),
-      el('button', { class: 'btn block', type: 'button', onclick: () => { S.tab = 'week'; render(); } }, 'Do another session'),
+      el('button', { class: 'btn block', type: 'button', onclick: goToAllSessions }, 'Do another session'),
     ));
   } else {
     const prev = el('div', { class: 'preview' });
@@ -974,6 +1017,7 @@ function renderToday() {
       el('p', { class: 'lede' }, sess.focus),
       el('div', { class: 'card', style: 'box-shadow:none;padding:14px 16px' }, prev),
       el('button', { class: 'btn primary block', type: 'button', onclick: () => startSession(sess) }, "Let's go"),
+      el('button', { class: 'btn soft block', type: 'button', onclick: goToAllSessions }, 'Or pick a different session'),
     ));
   }
 
@@ -998,7 +1042,7 @@ function startSession(def) {
   S.active = {
     id: uid(), sessionId: def.id, name: def.name, type: def.type, mins: def.mins,
     startedAt: new Date().toISOString(), updatedAt: Date.now(),
-    exercises: def.exercises.map(e => ({ id: e.id, name: e.name, kind: e.kind, target: e.target, note: e.note, value: e.kind === 'kb' ? (S.weights[e.id] || null) : (e.kind === 'walk' ? firstNum(e.target) : null), done: false, yay: '' })),
+    exercises: def.exercises.map(e => ({ id: e.id, name: e.name, kind: e.kind, target: e.target, note: e.note, intervals: e.intervals || null, value: e.kind === 'kb' ? (S.weights[e.id] || null) : (e.kind === 'walk' ? firstNum(e.target) : null), done: false, yay: '' })),
   };
   Store.putActive(true);
   S.tab = 'today'; render(); window.scrollTo({ top: 0 });
@@ -1043,14 +1087,18 @@ function exRow(e, i) {
     onclick: () => toggle(i),
   }));
   const k = KINDS[e.kind];
-  const holdSecs = e.kind === 'hold' ? parseHold(e.target) : null;
-  if (holdSecs) {
+  const phases = phasesFor(e);
+  if (phases) {
     const running = HoldTimer.idx === i;
     const btn = el('button', { class: 'btn sm timer' + (running ? ' running' : ''), type: 'button', id: 'holdtimer-' + i,
-      onclick: () => { if (HoldTimer.idx === i) HoldTimer.stop(); else HoldTimer.start(i, holdSecs); } },
-      running ? `${fmtCount(HoldTimer.left())} — stop` : `Start ${fmtCount(holdSecs)}`);
+      onclick: () => { if (HoldTimer.idx === i) HoldTimer.stop(); else HoldTimer.start(i, phases); } },
+      running ? HoldTimer.label() : (phases.length > 1 ? `Start ${phases[0].of} rounds` : `Start ${fmtCount(phases[0].secs)}`));
     const perSide = /each side|per side/i.test((e.target || '') + ' ' + (e.note || ''));
-    row.appendChild(el('div', { class: 'fld' }, btn, el('span', null, perSide ? 'one side — tap again for the other' : 'counts down and chimes')));
+    let hint = 'counts down and chimes';
+    if (running && phases.length > 1) hint = HoldTimer.sub();
+    else if (phases.length > 1) hint = `${fmtCount(phases[0].secs)} ${phases[0].label.toLowerCase()}, ${fmtCount(phases[1].secs)} ${phases[1].label.toLowerCase()}`;
+    else if (perSide) hint = 'one side — tap again for the other';
+    row.appendChild(el('div', { class: 'fld' }, btn, el('span', { id: 'holdsub-' + i }, hint)));
   }
   if (e.kind === 'kb' || e.kind === 'walk') {
     const inp = el('input', { type: 'text', inputmode: 'decimal', id: `f-${S.active.id}-${i}`, value: e.value == null ? '' : String(e.value), placeholder: k.placeholder, 'aria-label': `${e.name} ${k.label}` });
@@ -1141,6 +1189,7 @@ function renderWeek() {
   const dates = weekDates(); const today = todayISO();
   v.appendChild(el('div', { class: 'section-head' }, el('h2', null, 'My week'), el('button', { class: 'btn soft sm', type: 'button', onclick: () => { S.plan = Object.assign({}, DEFAULT_PLAN); Store.putMeta(); toast('Back to the original week'); renderWeek(); } }, 'Reset')));
   v.appendChild(el('p', { class: 'small muted' }, 'Change any day to whatever suits you. Thursday is your rest day — keep at least one.'));
+  v.appendChild(el('button', { class: 'btn block', type: 'button', onclick: goToAllSessions }, 'Browse all 9 sessions'));
   const plan = el('div', { class: 'plan' });
   DAY_KEYS.forEach((k, i) => {
     const sess = sessionById(S.plan[k]) || sessionById('rest');
@@ -1165,7 +1214,7 @@ function renderWeek() {
   v.appendChild(plan);
   v.appendChild(quoteCard('A plan you can actually keep beats a perfect one you cannot.'));
 
-  const sec = el('section', { class: 'section' }, el('h3', null, 'All your sessions'), el('p', { class: 'small muted' }, 'Do any of these whenever you fancy, whatever the plan says.'));
+  const sec = el('section', { class: 'section', id: 'all-sessions' }, el('h3', null, 'All your sessions'), el('p', { class: 'small muted' }, 'Do any of these whenever you fancy, whatever the plan says. Anything held for a set time has its own countdown timer.'));
   ['kb', 'pilates', 'walk'].forEach(t => {
     const list = el('div', { class: 'preview card' });
     SESSIONS.filter(s => s.type === t).forEach(s => list.appendChild(el('div', { class: 'i' },
