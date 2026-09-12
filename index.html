@@ -323,6 +323,30 @@ textarea::placeholder { color: var(--ink-faint); }
 .tab .dot { position: absolute; top: 6px; right: 18%; width: 7px; height: 7px; border-radius: 50%; background: var(--apricot); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---- Hold timer ---- */
+.btn.timer { min-width: 118px; font-variant-numeric: tabular-nums; }
+.btn.timer.running { background: var(--sage); border-color: var(--sage); color: var(--on-accent); }
+
+/* ---- Month calendar ---- */
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.cal .cw { font-family: var(--display); font-size: 11px; font-weight: 700; color: var(--ink-faint); text-align: center; padding-bottom: 2px; }
+.cal .cell { aspect-ratio: 1; border: 0; background: transparent; padding: 0; display: grid; place-items: center; position: relative; border-radius: 50%; }
+.cal .cell.pad { visibility: hidden; }
+.cal .cell .dot { position: absolute; width: 76%; height: 76%; border-radius: 50%; background: var(--surface-2); border: 1.5px solid var(--line); }
+.cal .cell .n { position: relative; font-size: 12px; font-weight: 700; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.cal .cell.future .dot { background: transparent; border-style: dashed; border-color: var(--line); }
+.cal .cell.future .n { color: var(--line-2); }
+.cal .cell.rest .dot { background: var(--amber-soft); border-color: var(--amber-soft); }
+.cal .cell.rest .n { color: var(--amber); }
+.cal .cell.done .n { color: var(--on-accent); }
+.cal .cell.done.rose .dot { background: var(--rose); border-color: var(--rose); }
+.cal .cell.done.apricot .dot { background: var(--apricot); border-color: var(--apricot); }
+.cal .cell.done.sage .dot { background: var(--sage); border-color: var(--sage); }
+.cal .cell.done.amber .dot { background: var(--amber); border-color: var(--amber); }
+.cal .cell.today { box-shadow: 0 0 0 2px var(--rose); }
+.cal .cell:not(:disabled) { cursor: pointer; }
+.cal .cell:not(:disabled):hover .dot { filter: brightness(1.06); }
 </style>
 </head>
 <body>
@@ -435,17 +459,17 @@ const SESSIONS = [
       ex('Side Leg Lifts','reps','2 × 15 each side'),
       ex('Donkey Kicks','reps','2 × 12 each side'),
       ex('Fire Hydrants','reps','2 × 12 each side'),
-      ex('Figure-4 Stretch','hold','2 min','One minute each side'),
+      ex('Figure-4 Stretch','hold','1 min each side'),
     ]},
   { id:'pil-stretch', name:'Stretch & Unwind', type:'pilates', mins:20,
     focus:'The gentlest one. Perfect for a Sunday or a tired day.',
     exercises:[
       ex('Cat–Cow','reps','10 slow','Move with your breath'),
       ex("Child's Pose",'hold','90 sec'),
-      ex('Spine Twist','hold','2 min','One minute each side'),
-      ex('Hamstring Stretch','hold','2 min','A strap or towel helps'),
-      ex('Hip Flexor Stretch','hold','2 min'),
-      ex('Figure-4 Stretch','hold','2 min'),
+      ex('Spine Twist','hold','1 min each side','Tap the timer again when you swap over'),
+      ex('Hamstring Stretch','hold','1 min each side','A strap or towel helps'),
+      ex('Hip Flexor Stretch','hold','1 min each side'),
+      ex('Figure-4 Stretch','hold','1 min each side'),
       ex('Chest Opener','hold','1 min'),
       ex('Legs Up the Wall','hold','3 min','The nicest three minutes of your day'),
     ]},
@@ -649,6 +673,56 @@ function daily(list, salt) {
 }
 function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
 function firstNum(t) { const m = String(t || '').match(/\d+(?:\.\d+)?/); return m ? parseFloat(m[0]) : null; }
+function fmtCount(sec) { sec = Math.max(0, Math.round(sec || 0)); return `${Math.floor(sec / 60)}:${pad2(sec % 60)}`; }
+/* "2 min" -> 120 · "90 sec" -> 90 · "2 x 20 sec each side" -> 20 */
+function parseHold(target) {
+  const m = String(target || '').match(/(\d+(?:\.\d+)?)\s*(sec(?:onds?)?|s|min(?:ute)?s?)\b/i);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  return /^m/i.test(m[2]) ? Math.round(n * 60) : Math.round(n);
+}
+const Chime = {
+  ctx: null,
+  prime() { try { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); } catch (e) {} },
+  play() {
+    try { if (navigator.vibrate) navigator.vibrate([90, 70, 90]); } catch (e) {}
+    try {
+      this.prime(); const c = this.ctx; if (!c) return;
+      [[660, 0], [880, 0.18]].forEach(([f, t]) => {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = 'sine'; o.frequency.value = f;
+        o.connect(g); g.connect(c.destination);
+        const at = c.currentTime + t;
+        g.gain.setValueAtTime(0.0001, at);
+        g.gain.exponentialRampToValueAtTime(0.16, at + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + 0.5);
+        o.start(at); o.stop(at + 0.55);
+      });
+    } catch (e) {}
+  },
+};
+const HoldTimer = {
+  idx: null, endsAt: 0, iv: null,
+  left() { return Math.max(0, Math.ceil((this.endsAt - Date.now()) / 1000)); },
+  start(i, secs) {
+    clearInterval(this.iv);
+    Chime.prime();
+    this.idx = i; this.endsAt = Date.now() + secs * 1000;
+    this.iv = setInterval(() => this.tick(), 250);
+    renderSession();
+  },
+  stop() { clearInterval(this.iv); this.iv = null; this.idx = null; this.endsAt = 0; if (S.active) renderSession(); },
+  tick() {
+    const btn = document.getElementById('holdtimer-' + this.idx);
+    const left = this.left();
+    if (btn) btn.textContent = left > 0 ? `${fmtCount(left)} — stop` : 'Done';
+    if (left <= 0) {
+      clearInterval(this.iv); this.iv = null; this.idx = null; this.endsAt = 0;
+      Chime.play(); toast('Time is up — lovely.');
+      setTimeout(() => { if (S.active) renderSession(); }, 900);
+    }
+  },
+};
 
 /* ================= State ================= */
 const S = {
@@ -659,6 +733,7 @@ const S = {
   active: null,
   tab: 'today',
   expanded: {},
+  calOffset: 0,
   mail: null,
   updatedAt: 0,
 };
@@ -968,6 +1043,15 @@ function exRow(e, i) {
     onclick: () => toggle(i),
   }));
   const k = KINDS[e.kind];
+  const holdSecs = e.kind === 'hold' ? parseHold(e.target) : null;
+  if (holdSecs) {
+    const running = HoldTimer.idx === i;
+    const btn = el('button', { class: 'btn sm timer' + (running ? ' running' : ''), type: 'button', id: 'holdtimer-' + i,
+      onclick: () => { if (HoldTimer.idx === i) HoldTimer.stop(); else HoldTimer.start(i, holdSecs); } },
+      running ? `${fmtCount(HoldTimer.left())} — stop` : `Start ${fmtCount(holdSecs)}`);
+    const perSide = /each side|per side/i.test((e.target || '') + ' ' + (e.note || ''));
+    row.appendChild(el('div', { class: 'fld' }, btn, el('span', null, perSide ? 'one side — tap again for the other' : 'counts down and chimes')));
+  }
   if (e.kind === 'kb' || e.kind === 'walk') {
     const inp = el('input', { type: 'text', inputmode: 'decimal', id: `f-${S.active.id}-${i}`, value: e.value == null ? '' : String(e.value), placeholder: k.placeholder, 'aria-label': `${e.name} ${k.label}` });
     inp.addEventListener('change', () => {
@@ -998,7 +1082,7 @@ function leaveSession() {
     el('div', { class: 'stack' },
       el('button', { class: 'btn primary block', type: 'button', onclick: closeModal }, 'Keep going'),
       el('button', { class: 'btn block', type: 'button', onclick: () => { closeModal(); finishSession(); } }, 'Finish and save it'),
-      el('button', { class: 'btn soft block', type: 'button', onclick: () => { S.active = null; Store.putActive(true); closeModal(); render(); toast('No bother — another time.'); } }, 'Leave without saving'),
+      el('button', { class: 'btn soft block', type: 'button', onclick: () => { HoldTimer.stop(); S.active = null; Store.putActive(true); closeModal(); render(); toast('No bother — another time.'); } }, 'Leave without saving'),
     ),
   ]);
 }
@@ -1035,6 +1119,7 @@ function saveSession(feel, notes, mins, done) {
   };
   Store.putLog(log);
   emailSession(log);
+  HoldTimer.stop();
   S.active = null; Store.putActive(true);
   closeModal();
   const st = weekStats();
@@ -1105,21 +1190,12 @@ function renderJournal() {
   }
   v.appendChild(quoteCard(`${monthCount()} ${monthCount() === 1 ? 'session' : 'sessions'} this month. Every one of them was a choice you made for yourself.`));
 
-  /* last 7 days of minutes */
-  const days = [];
-  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); const iso = todayISO(d); days.push({ iso, label: 'MTWTFSS'[(d.getDay() + 6) % 7], mins: logsOn(iso).reduce((a, l) => a + (l.mins || 0), 0) }); }
-  const max = Math.max(30, ...days.map(d => d.mins));
-  const sp = el('div', { class: 'spark' });
-  days.forEach(d => sp.appendChild(el('div', { class: 'b' + (d.mins ? '' : ' zero'), title: `${fmtDate(d.iso)}: ${d.mins ? fmtMins(d.mins) : 'rest'}` },
-    el('i', { style: `height:${d.mins ? Math.max(6, Math.round(d.mins / max * 62)) : 3}px`, 'aria-hidden': 'true' }),
-    el('span', null, d.label))));
-  v.appendChild(el('div', { class: 'card stack' }, el('h3', null, 'Minutes moved, last 7 days'), sp,
-    el('p', { class: 'small muted' }, `${fmtMins(st.mins)} this week so far.`)));
+  v.appendChild(monthCard());
 
   const list = el('div', { class: 'jlist' });
   logs.slice(0, 60).forEach(l => {
     const open = !!S.expanded[l.id];
-    const item = el('div', { class: 'jitem' });
+    const item = el('div', { class: 'jitem', id: 'j-' + l.id });
     item.appendChild(el('button', { class: 'hd', type: 'button', 'aria-expanded': open ? 'true' : 'false', onclick: () => { S.expanded[l.id] = !open; renderJournal(); } },
       el('div', { class: 'dt' }, el('b', null, fmtDate(l.finishedAt, { day: 'numeric' })), el('small', null, fmtDate(l.finishedAt, { month: 'short' }))),
       el('div', null, el('div', { class: 'nm' }, l.name), el('div', { class: 'sub' }, [TYPES[l.type] ? TYPES[l.type].label : '', fmtMins(l.mins), l.feel].filter(Boolean).join(' · '))),
@@ -1145,6 +1221,50 @@ function renderJournal() {
   });
   v.appendChild(list);
   v.appendChild(settingsCard());
+}
+
+function monthCard() {
+  const off = S.calOffset || 0;
+  const base = new Date(); base.setDate(1); base.setMonth(base.getMonth() + off);
+  const year = base.getFullYear(), month = base.getMonth();
+  const today = todayISO();
+  const daysIn = new Date(year, month + 1, 0).getDate();
+  const startPad = (new Date(year, month, 1).getDay() + 6) % 7;
+
+  const grid = el('div', { class: 'cal' });
+  ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach(d => grid.appendChild(el('span', { class: 'cw' }, d)));
+  for (let i = 0; i < startPad; i++) grid.appendChild(el('span', { class: 'cell pad' }));
+
+  let moved = 0, mins = 0;
+  for (let d = 1; d <= daysIn; d++) {
+    const iso = todayISO(new Date(year, month, d));
+    const done = logsOn(iso);
+    const future = iso > today;
+    const isRest = S.plan[dayKey(iso)] === 'rest';
+    let cls = 'cell';
+    if (done.length) { cls += ' done ' + TYPES[done[0].type].colour; moved++; mins += done.reduce((a, l) => a + (l.mins || 0), 0); }
+    else if (future) cls += ' future';
+    else if (isRest) cls += ' rest';
+    if (iso === today) cls += ' today';
+    const label = done.length ? `${fmtDate(iso, { day: 'numeric', month: 'short' })}: ${done.map(l => l.name).join(', ')}` : (isRest ? `${fmtDate(iso, { day: 'numeric', month: 'short' })}: rest day` : fmtDate(iso, { day: 'numeric', month: 'short' }));
+    const cell = el('button', { class: cls, type: 'button', title: label, 'aria-label': label, disabled: !done.length,
+      onclick: () => { if (!done.length) return; S.expanded[done[0].id] = true; renderJournal(); setTimeout(() => { const n = document.getElementById('j-' + done[0].id); if (n) n.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 60); } },
+      el('span', { class: 'dot', 'aria-hidden': 'true' }), el('span', { class: 'n' }, String(d)));
+    grid.appendChild(cell);
+  }
+  const name = base.toLocaleDateString('en-GB', { month: 'long', year: off ? 'numeric' : undefined });
+  const line = moved
+    ? `${moved} ${moved === 1 ? 'day' : 'days'} you moved${mins ? ` · ${fmtMins(mins)} in total` : ''}.`
+    : (off ? 'Nothing logged this month.' : 'Nothing yet this month — plenty of time.');
+  return el('div', { class: 'card stack' },
+    el('div', { class: 'row between' },
+      el('button', { class: 'btn soft sm', type: 'button', 'aria-label': 'Previous month', onclick: () => { S.calOffset = off - 1; renderJournal(); } }, '‹'),
+      el('h3', null, name),
+      el('button', { class: 'btn soft sm', type: 'button', 'aria-label': 'Next month', disabled: off >= 0, onclick: () => { S.calOffset = Math.min(0, off + 1); renderJournal(); } }, '›'),
+    ),
+    grid,
+    el('p', { class: 'small muted' }, line),
+  );
 }
 
 function settingsCard() {
