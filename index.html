@@ -45,6 +45,7 @@
   --r: 15px;
   --r-sm: 11px;
   --nav-h: 68px;
+  --sat: env(safe-area-inset-top, 0px);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -128,8 +129,10 @@ p { margin: 0; }
 [hidden] { display: none !important; }
 
 /* ---- Shell ---- */
-.app { max-width: 560px; margin: 0 auto; padding-inline: 18px; padding-block: 0 calc(var(--nav-h) + 34px + env(safe-area-inset-bottom)); }
-.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; padding-block: 22px 4px; }
+.app { max-width: 560px; margin: 0 auto;
+  padding-inline: max(18px, env(safe-area-inset-left)) max(18px, env(safe-area-inset-right));
+  padding-block: 0 calc(var(--nav-h) + 34px + env(safe-area-inset-bottom)); }
+.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; padding-block: calc(22px + var(--sat)) 4px; }
 .hello { display: grid; gap: 1px; }
 .hello .kicker { font-family: var(--display); font-size: 13px; font-weight: 600; color: var(--rose); letter-spacing: 0.02em; }
 .hello h1 { font-size: 27px; }
